@@ -1,0 +1,6 @@
+{
+  "name": "ClassifyLearn - Real-Time File Classification & Data Visualizer",
+  "description": "Real-time AI file classification studio with dynamic taxonomy configuration, document intelligence, active learning benchmarks, and interactive visual data analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
