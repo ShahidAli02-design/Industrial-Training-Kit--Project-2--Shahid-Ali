@@ -227,6 +227,21 @@ export default function App() {
     setFiles(prev => prev.filter(f => !fileIds.includes(f.id)));
   };
 
+  // Bulk Tag
+  const handleBulkTag = (fileIds: string[], tag: string) => {
+    const cleanTag = tag.trim();
+    if (!cleanTag || fileIds.length === 0) return;
+    setFiles(prev => prev.map(f => {
+      if (fileIds.includes(f.id)) {
+        const currentTags = f.tags || [];
+        if (!currentTags.includes(cleanTag)) {
+          return { ...f, tags: [...currentTags, cleanTag] };
+        }
+      }
+      return f;
+    }));
+  };
+
   // Update active taxonomy schema
   const handleUpdateActiveTaxonomy = (updated: TaxonomySchema) => {
     setTaxonomies(prev => prev.map(t => t.id === updated.id ? updated : t));
@@ -307,6 +322,8 @@ export default function App() {
             onSelectFileToInspect={(file) => setInspectingFile(file)}
             onDeleteFile={handleDeleteFile}
             onBulkDelete={handleBulkDelete}
+            onBulkTag={handleBulkTag}
+            onUpdateFile={handleUpdateFile}
           />
         )}
       </main>

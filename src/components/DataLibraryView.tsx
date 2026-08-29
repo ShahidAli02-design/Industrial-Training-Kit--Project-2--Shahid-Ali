@@ -4,14 +4,13 @@ import {
   Search, 
   Download, 
   Trash2, 
-  Filter, 
   CheckSquare, 
   Square, 
   FileText, 
-  ExternalLink,
-  ChevronDown,
   ArrowUpDown,
-  Tag
+  Tag,
+  X,
+  Check
 } from 'lucide-react';
 import { FileItem, TaxonomySchema } from '../types';
 
@@ -21,29 +20,54 @@ interface DataLibraryViewProps {
   onSelectFileToInspect: (file: FileItem) => void;
   onDeleteFile: (fileId: string) => void;
   onBulkDelete: (fileIds: string[]) => void;
+  onBulkTag?: (fileIds: string[], tag: string) => void;
+  onUpdateFile?: (file: FileItem) => void;
 }
+
+const COMMON_TAG_SUGGESTIONS = [
+  'Reviewed',
+  'Confidential',
+  'Q3-Audit',
+  'Urgent-Action',
+  'Training-Set',
+  'Export-Ready',
+  'Compliance-Check',
+  'Needs-Revision'
+];
 
 export const DataLibraryView: React.FC<DataLibraryViewProps> = ({
   files = [],
   taxonomy,
   onSelectFileToInspect,
   onDeleteFile,
-  onBulkDelete
+  onBulkDelete,
+  onBulkTag,
+  onUpdateFile
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
+  const [selectedTagFilter, setSelectedTagFilter] = useState<string>('all');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [sortBy, setSortBy] = useState<'date' | 'confidence' | 'name' | 'risk'>('date');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  
+  // Bulk Tagging State
+  const [showBulkTagMenu, setShowBulkTagMenu] = useState(false);
+  const [customTagInput, setCustomTagInput] = useState('');
+  const [tagNotification, setTagNotification] = useState<string | null>(null);
 
   const safeFiles = files || [];
+
+  // Extract all unique existing tags across dataset
+  const allUniqueTags = Array.from(new Set(safeFiles.flatMap(f => f.tags || []))).filter(Boolean);
 
   // Filter & Sort
   const filteredFiles = safeFiles.filter(f => {
     if (!f) return false;
     if (selectedCategory !== 'all' && f.result?.categoryId !== selectedCategory) return false;
     if (selectedStatus !== 'all' && f.status !== selectedStatus) return false;
+    if (selectedTagFilter !== 'all' && !(f.tags || []).includes(selectedTagFilter)) return false;
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const matchName = f.name?.toLowerCase().includes(q);
@@ -86,17 +110,45 @@ export const DataLibraryView: React.FC<DataLibraryViewProps> = ({
     }
   };
 
+  // Execute Bulk Tagging
+  const handleApplyBulkTag = (tag: string) => {
+    const trimmed = tag.trim();
+    if (!trimmed || selectedIds.length === 0) return;
+
+    if (onBulkTag) {
+      onBulkTag(selectedIds, trimmed);
+    }
+    
+    setTagNotification(`Tag "${trimmed}" applied to ${selectedIds.length} document${selectedIds.length > 1 ? 's' : ''}`);
+    setTimeout(() => setTagNotification(null), 3500);
+
+    setCustomTagInput('');
+    setShowBulkTagMenu(false);
+  };
+
+  // Remove tag from single file
+  const handleRemoveTagFromFile = (file: FileItem, tagToRemove: string) => {
+    if (onUpdateFile) {
+      const updated = {
+        ...file,
+        tags: (file.tags || []).filter(t => t !== tagToRemove)
+      };
+      onUpdateFile(updated);
+    }
+  };
+
   // Export CSV
   const handleExportCsv = () => {
     const targetFiles = selectedIds.length > 0
       ? files.filter(f => selectedIds.includes(f.id))
       : filteredFiles;
 
-    const headers = ['File Name', 'Category', 'Confidence (%)', 'Risk Score', 'Urgency', 'Size (KB)', 'Uploaded At', 'Summary'];
+    const headers = ['File Name', 'Category', 'Confidence (%)', 'Tags', 'Risk Score', 'Urgency', 'Size (KB)', 'Uploaded At', 'Summary'];
     const rows = targetFiles.map(f => [
       `"${f.name.replace(/"/g, '""')}"`,
       `"${f.result?.categoryName || 'Unclassified'}"`,
       f.result?.confidence.toFixed(1) || '0',
+      `"${(f.tags || []).join(', ')}"`,
       f.result?.riskScore || '1',
       f.result?.urgency || 'medium',
       (f.size / 1024).toFixed(1),
@@ -140,12 +192,13 @@ export const DataLibraryView: React.FC<DataLibraryViewProps> = ({
             <span>Classified Document Dataset Library</span>
           </h1>
           <p className="text-xs text-slate-400">
-            Search, filter, inspect, and export all documents ingested under the active schema
+            Search, filter, tag, inspect, and export all documents ingested under the active schema
           </p>
         </div>
 
         <div className="flex items-center gap-2">
           <button
+            id="export-csv-button"
             onClick={handleExportCsv}
             className="flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-3.5 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700 transition-colors"
           >
@@ -153,6 +206,7 @@ export const DataLibraryView: React.FC<DataLibraryViewProps> = ({
             <span>Export CSV</span>
           </button>
           <button
+            id="export-json-button"
             onClick={handleExportJson}
             className="flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-3.5 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700 transition-colors"
           >
@@ -162,58 +216,178 @@ export const DataLibraryView: React.FC<DataLibraryViewProps> = ({
         </div>
       </div>
 
-      {/* Filter & Action Toolbar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/60 p-4 rounded-xl border border-slate-800">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="relative">
-            <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-500" />
-            <input
-              type="text"
-              placeholder="Search documents..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="rounded-lg border border-slate-800 bg-slate-950 pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none w-56"
-            />
-          </div>
-
-          <select
-            value={selectedCategory}
-            onChange={(e) => setSelectedCategory(e.target.value)}
-            className="rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-300 focus:border-indigo-500 focus:outline-none"
-          >
-            <option value="all">All Categories</option>
-            {taxonomy.categories.map(c => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-
-          <select
-            value={selectedStatus}
-            onChange={(e) => setSelectedStatus(e.target.value)}
-            className="rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-300 focus:border-indigo-500 focus:outline-none"
-          >
-            <option value="all">All Statuses</option>
-            <option value="classified">Classified</option>
-            <option value="flagged_review">Flagged for Review</option>
-            <option value="corrected">Human Corrected</option>
-          </select>
-        </div>
-
-        {selectedIds.length > 0 && (
+      {/* Notification Toast */}
+      {tagNotification && (
+        <div className="flex items-center justify-between gap-2 rounded-xl border border-cyan-500/40 bg-cyan-950/80 px-4 py-2.5 text-xs text-cyan-200 shadow-lg shadow-cyan-950/50">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-400">{selectedIds.length} selected</span>
-            <button
-              onClick={() => {
-                onBulkDelete(selectedIds);
-                setSelectedIds([]);
-              }}
-              className="flex items-center gap-1 rounded-lg bg-rose-600/20 border border-rose-500/40 px-2.5 py-1 text-xs font-semibold text-rose-300 hover:bg-rose-600/30"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              <span>Delete Selected</span>
-            </button>
+            <Check className="h-4 w-4 text-cyan-400" />
+            <span className="font-medium">{tagNotification}</span>
           </div>
-        )}
+          <button onClick={() => setTagNotification(null)} className="text-cyan-400 hover:text-white">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Filter & Action Toolbar */}
+      <div className="flex flex-col gap-3 bg-slate-900/60 p-4 rounded-xl border border-slate-800">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-500" />
+              <input
+                type="text"
+                id="library-search-input"
+                placeholder="Search files, tags, content..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="rounded-lg border border-slate-800 bg-slate-950 pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none w-56"
+              />
+            </div>
+
+            <select
+              id="library-category-filter"
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-300 focus:border-indigo-500 focus:outline-none"
+            >
+              <option value="all">All Categories</option>
+              {taxonomy.categories.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+
+            <select
+              id="library-status-filter"
+              value={selectedStatus}
+              onChange={(e) => setSelectedStatus(e.target.value)}
+              className="rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-300 focus:border-indigo-500 focus:outline-none"
+            >
+              <option value="all">All Statuses</option>
+              <option value="classified">Classified</option>
+              <option value="flagged_review">Flagged for Review</option>
+              <option value="corrected">Human Corrected</option>
+            </select>
+
+            {allUniqueTags.length > 0 && (
+              <select
+                id="library-tag-filter"
+                value={selectedTagFilter}
+                onChange={(e) => setSelectedTagFilter(e.target.value)}
+                className="rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-300 focus:border-indigo-500 focus:outline-none"
+              >
+                <option value="all">All Tags ({allUniqueTags.length})</option>
+                {allUniqueTags.map(t => (
+                  <option key={t} value={t}>Tag: {t}</option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {/* Bulk Selection Actions */}
+          {selectedIds.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-indigo-300 bg-indigo-950/60 border border-indigo-800/50 rounded-lg px-2.5 py-1">
+                {selectedIds.length} selected
+              </span>
+
+              {/* Bulk Tag Button & Popover */}
+              <div className="relative">
+                <button
+                  id="bulk-tag-button"
+                  onClick={() => setShowBulkTagMenu(!showBulkTagMenu)}
+                  className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500 shadow-md shadow-indigo-600/20 transition-all"
+                >
+                  <Tag className="h-3.5 w-3.5" />
+                  <span>Bulk Tag</span>
+                </button>
+
+                {showBulkTagMenu && (
+                  <div 
+                    id="bulk-tag-popover"
+                    className="absolute right-0 top-full mt-2 w-80 rounded-xl border border-slate-700 bg-slate-900 p-3 shadow-2xl shadow-black z-50"
+                  >
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-white">
+                        <Tag className="h-3.5 w-3.5 text-cyan-400" />
+                        <span>Apply Common Tag</span>
+                      </div>
+                      <button 
+                        onClick={() => setShowBulkTagMenu(false)}
+                        className="text-slate-400 hover:text-white"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+
+                    <p className="text-[11px] text-slate-400 py-1.5">
+                      Tag {selectedIds.length} selected document{selectedIds.length > 1 ? 's' : ''} simultaneously:
+                    </p>
+
+                    {/* Custom Tag Input */}
+                    <form 
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        handleApplyBulkTag(customTagInput);
+                      }}
+                      className="flex items-center gap-1.5 my-2"
+                    >
+                      <input
+                        type="text"
+                        id="bulk-tag-custom-input"
+                        placeholder="Type custom tag name..."
+                        value={customTagInput}
+                        onChange={(e) => setCustomTagInput(e.target.value)}
+                        className="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
+                        autoFocus
+                      />
+                      <button
+                        type="submit"
+                        id="bulk-tag-apply-custom"
+                        disabled={!customTagInput.trim()}
+                        className="rounded-lg bg-cyan-500 px-2.5 py-1.5 text-xs font-bold text-slate-950 hover:bg-cyan-400 disabled:opacity-40"
+                      >
+                        Add
+                      </button>
+                    </form>
+
+                    {/* Quick Suggestion Chips */}
+                    <div className="pt-2 border-t border-slate-800">
+                      <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+                        Suggested Tags
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {COMMON_TAG_SUGGESTIONS.map(tag => (
+                          <button
+                            key={tag}
+                            type="button"
+                            onClick={() => handleApplyBulkTag(tag)}
+                            className="rounded-md bg-slate-800 border border-slate-700 px-2 py-0.5 text-[11px] font-medium text-slate-300 hover:bg-indigo-600/30 hover:border-indigo-500/50 hover:text-indigo-200 transition-colors"
+                          >
+                            + {tag}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Bulk Delete */}
+              <button
+                id="bulk-delete-button"
+                onClick={() => {
+                  onBulkDelete(selectedIds);
+                  setSelectedIds([]);
+                }}
+                className="flex items-center gap-1 rounded-lg bg-rose-600/20 border border-rose-500/40 px-2.5 py-1 text-xs font-semibold text-rose-300 hover:bg-rose-600/30 transition-colors"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Delete Selected</span>
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Main Data Table */}
@@ -222,7 +396,11 @@ export const DataLibraryView: React.FC<DataLibraryViewProps> = ({
           <thead className="border-b border-slate-800 bg-slate-950/80 text-[11px] font-bold uppercase tracking-wider text-slate-400">
             <tr>
               <th className="p-4 w-10">
-                <button onClick={handleToggleSelectAll} className="text-slate-400 hover:text-white">
+                <button 
+                  id="select-all-checkbox"
+                  onClick={handleToggleSelectAll} 
+                  className="text-slate-400 hover:text-white"
+                >
                   {selectedIds.length === filteredFiles.length && filteredFiles.length > 0 ? (
                     <CheckSquare className="h-4 w-4 text-indigo-400" />
                   ) : (
@@ -236,7 +414,8 @@ export const DataLibraryView: React.FC<DataLibraryViewProps> = ({
                   <ArrowUpDown className="h-3 w-3" />
                 </div>
               </th>
-              <th className="py-4 px-3">Class / Taxonomy Code</th>
+              <th className="py-4 px-3">Class / Taxonomy</th>
+              <th className="py-4 px-3">Applied Tags</th>
               <th className="py-4 px-3 cursor-pointer" onClick={() => { setSortBy('confidence'); setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc'); }}>
                 <div className="flex items-center gap-1">
                   <span>Confidence</span>
@@ -245,7 +424,7 @@ export const DataLibraryView: React.FC<DataLibraryViewProps> = ({
               </th>
               <th className="py-4 px-3 cursor-pointer" onClick={() => { setSortBy('risk'); setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc'); }}>
                 <div className="flex items-center gap-1">
-                  <span>Risk Score</span>
+                  <span>Risk</span>
                   <ArrowUpDown className="h-3 w-3" />
                 </div>
               </th>
@@ -262,14 +441,17 @@ export const DataLibraryView: React.FC<DataLibraryViewProps> = ({
               return (
                 <tr key={file.id} className={`hover:bg-slate-950/40 transition-colors ${isSelected ? 'bg-indigo-950/20' : ''}`}>
                   <td className="p-4">
-                    <button onClick={() => handleToggleSelect(file.id)} className="text-slate-400 hover:text-white">
+                    <button 
+                      onClick={() => handleToggleSelect(file.id)} 
+                      className="text-slate-400 hover:text-white"
+                    >
                       {isSelected ? <CheckSquare className="h-4 w-4 text-indigo-400" /> : <Square className="h-4 w-4" />}
                     </button>
                   </td>
-                  <td className="py-3 px-3 font-semibold text-white max-w-[240px] truncate">
+                  <td className="py-3 px-3 font-semibold text-white max-w-[220px]">
                     <div className="flex items-center gap-2">
                       <FileText className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                      <span className="truncate">{file.name}</span>
+                      <span className="truncate" title={file.name}>{file.name}</span>
                     </div>
                   </td>
                   <td className="py-3 px-3">
@@ -279,6 +461,33 @@ export const DataLibraryView: React.FC<DataLibraryViewProps> = ({
                     >
                       {file.result?.categoryName || 'Unclassified'}
                     </span>
+                  </td>
+                  <td className="py-3 px-3 max-w-[200px]">
+                    <div className="flex flex-wrap items-center gap-1">
+                      {(file.tags && file.tags.length > 0) ? (
+                        file.tags.map((tag) => (
+                          <span
+                            key={tag}
+                            className="inline-flex items-center gap-1 rounded-md bg-slate-800/90 border border-slate-700/60 px-1.5 py-0.5 text-[10px] text-slate-300"
+                          >
+                            <Tag className="h-2.5 w-2.5 text-cyan-400" />
+                            <span>{tag}</span>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRemoveTagFromFile(file, tag);
+                              }}
+                              className="hover:text-rose-400 ml-0.5"
+                              title="Remove tag"
+                            >
+                              <X className="h-2.5 w-2.5" />
+                            </button>
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-[11px] text-slate-500 italic">No tags</span>
+                      )}
+                    </div>
                   </td>
                   <td className="py-3 px-3">
                     {file.result ? (
